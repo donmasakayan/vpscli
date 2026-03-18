@@ -1,0 +1,90 @@
+name: Build and Release vpscli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/interactive/src/**'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: client/interactive
+        run: bun install --frozen-lockfile
+
+      - name: Auto-increment patch version
+        working-directory: client/interactive
+        run: |
+          VERSION_FILE="src/lib/version.ts"
+          CURRENT=$(grep 'VPSCLI_VERSION' "$VERSION_FILE" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          sed -i "s/VPSCLI_VERSION = \"${CURRENT}\"/VPSCLI_VERSION = \"${NEW_VERSION}\"/" "$VERSION_FILE"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Bumped version: $CURRENT → $NEW_VERSION"
+        id: version
+
+      - name: Build binaries
+        working-directory: client/interactive
+        run: |
+          mkdir -p dist
+          bun build src/index.ts --compile --target=bun-linux-x64 --outfile dist/vpscli-linux-x64
+          bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile dist/vpscli-darwin-arm64
+          bun build src/index.ts --compile --target=bun-darwin-x64 --outfile dist/vpscli-darwin-x64
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add client/interactive/src/lib/version.ts
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: bump version to v${{ steps.version.outputs.version }} [skip ci]"
+          git push
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: vpscli v${{ steps.version.outputs.version }}
+          body: |
+            ## vpscli v${{ steps.version.outputs.version }}
+
+            Compiled Bun binaries for the interactive vpscli CLI.
+
+            ### Install / Update
+            ```bash
+            vpscli update
+            ```
+
+            Or fresh install:
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/donmasakayan/vpscli/main/client/setup.sh | bash
+            ```
+
+            ### Binaries
+            | Platform | File |
+            |----------|------|
+            | Linux x64 | `vpscli-linux-x64` |
+            | macOS Apple Silicon | `vpscli-darwin-arm64` |
+            | macOS Intel | `vpscli-darwin-x64` |
+          make_latest: true
+          files: |
+            client/interactive/dist/vpscli-linux-x64
+            client/interactive/dist/vpscli-darwin-arm64
+            client/interactive/dist/vpscli-darwin-x64

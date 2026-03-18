@@ -1,0 +1,5 @@
+machines:
+  - name: ovh-vps
+    host: 139.99.61.132
+    user: ubuntu
+    description: "Primary VPS"

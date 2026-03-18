@@ -1,0 +1,143 @@
+# Dev VPS Client Setup
+
+Agent-readable onboarding instructions. When an agent reads this file, it should walk the developer through each step interactively.
+
+## Instructions for the Agent
+
+You are setting up SSH access and the `vpscli` CLI for a shared development VPS. Walk the developer through this step by step, asking for preferences where noted. Do not skip steps or rush ahead — wait for confirmation before proceeding to the next step.
+
+## Context
+
+- **This repo**: You should already be in the `vpscli` repo checkout. If not, clone it first: `git clone https://github.com/donmasakayan/vpscli.git && cd vpscli`
+- **VPS registry**: `machines.yaml` lists all VPS instances (name, host, user)
+- **Shared user**: All developers SSH as the same user (defined per-machine) for pair programming via shared tmux sessions
+- **Session system**: The VPS runs a tmux session manager. When two people connect to the same named session, they share the exact same terminal — this enables live pair programming.
+- **CLI**: `vpscli` is the local client for managing VPS sessions
+
+## Step 1: SSH Key
+
+First, check if I already have SSH key pairs (`~/.ssh/id_ed25519.pub`, `~/.ssh/vps/id_vps_ed25519.pub`, or similar). If I do, ask whether I want to reuse an existing key or generate a dedicated one for this VPS.
+
+If generating a new key:
+1. Create the directory: `mkdir -p ~/.ssh/vps && chmod 700 ~/.ssh/vps`
+2. Ask me for my **first name** (for the key filename) and **email address** (suggest `firstname@nextfinancial.io` as the format)
+3. **IMPORTANT**: Use a unique filename per developer: `~/.ssh/vps/id_<name>_ed25519` (e.g. `id_don_ed25519`). Never overwrite an existing key file without explicit confirmation.
+4. Generate with: `ssh-keygen -t ed25519 -C "<my-email>" -f ~/.ssh/vps/id_<name>_ed25519`
+   - **Default to using a passphrase** for security. Let me choose the passphrase interactively.
+   - After generation, check if an ssh-agent is running (`ssh-add -l 2>/dev/null`). If not, start one (`eval $(ssh-agent -s)`).
+   - Add the key to the agent: `ssh-add ~/.ssh/vps/id_<name>_ed25519`
+   - On macOS, for persistent keychain integration: `ssh-add --apple-use-keychain ~/.ssh/vps/id_<name>_ed25519`
+
+After the key is ready, print the full public key contents.
+
+**IMPORTANT**: Take note of the exact path to the key used (whether newly generated or reused). You MUST use this same path as the `IdentityFile` in Step 2. If the developer chose to reuse an existing key (e.g. `~/.ssh/id_ed25519`), that path — not `~/.ssh/vps/id_<name>_ed25519` — must go in the SSH config.
+
+## Step 2: SSH Config
+
+Read the `machines.yaml` file in this repo to get the VPS host and user details. For each machine, create an SSH config entry.
+
+Before modifying `~/.ssh/config`:
+- If the file doesn't exist, create it with `touch ~/.ssh/config && chmod 600 ~/.ssh/config`
+- If it already contains an entry for the machine, show it and ask if I want to replace it
+
+For each machine in `machines.yaml`, add a host entry like:
+
+```
+Host ovh-vps
+  HostName <host from machines.yaml>
+  User <user from machines.yaml>
+  IdentityFile ~/.ssh/vps/id_<name>_ed25519
+  IdentitiesOnly yes
+  ServerAliveInterval 60
+  ServerAliveCountMax 3
+```
+
+**CRITICAL — `IdentitiesOnly yes` and correct `IdentityFile`**:
+- `IdentitiesOnly yes` is **required**. Without it, SSH tries every key in the agent and on disk before using the one specified. If the developer has multiple SSH keys (GitHub, other servers, etc.), SSH may exhaust its authentication attempts with the wrong keys and get "Permission denied" before ever trying the VPS key. This is the #1 cause of "Permission denied" issues for new developers.
+- `IdentityFile` **must match the actual key path from Step 1**. If the developer reused an existing key (e.g. `~/.ssh/id_ed25519`), use that path here — not the default `~/.ssh/vps/id_<name>_ed25519` template.
+
+After writing the config, **verify it is correct**:
+```bash
+# Confirm IdentitiesOnly is set and IdentityFile points to a file that exists
+grep -A5 "Host np-dev" ~/.ssh/config
+ls -la <the IdentityFile path from the config>
+```
+
+Also add the VPS host key to known_hosts:
+
+```bash
+ssh-keyscan -t ed25519 -H <host> >> ~/.ssh/known_hosts 2>/dev/null
+```
+
+## Step 3: Install vpscli CLI
+
+Run the client installer from the repo:
+
+```bash
+bash client/setup.sh
+```
+
+This downloads the compiled `vpscli` binary to `~/.local/bin/vpscli` and copies `machines.yaml` to `~/.vpscli/`.
+
+If `~/.local/bin` is not in your PATH, the script will tell you how to add it.
+
+## Step 4: Commit Public Key
+
+Copy the public key into the repo so it's tracked and future `server/setup.sh` runs import it automatically.
+
+Ask the developer for the filename to use (suggest their first name, lowercase). Then copy whichever public key was used in Step 1:
+
+```bash
+cp <path-to-public-key-from-step-1> keys/<name>.pub
+git add keys/<name>.pub
+git commit -m "chore: add <name> SSH public key"
+git push
+```
+
+## Step 5: Get Key Synced to VPS
+
+**Pause here.** Tell the developer:
+
+> "Your key has been pushed to the repo. Ask a teammate who already has VPS access to run `vpscli sync-keys` — this pulls your public key from GitHub and adds it to the server. Once they confirm it's done, tell me and I'll test the connection."
+
+## Step 6: Test Connection
+
+Once the developer confirms the key has been synced, test:
+
+```bash
+vpscli list
+```
+
+If the connection times out or is refused, suggest:
+- Verify the VPS is running
+- Check if a firewall or corporate VPN is blocking port 22
+- Confirm someone ran `vpscli sync-keys` after the key was pushed
+- If using a passphrase, ensure the key is loaded: `ssh-add -l`
+
+## Summary
+
+After completing all steps, print a concise summary:
+
+```
+✓ SSH key:      ~/.ssh/vps/id_<name>_ed25519
+✓ SSH config:   Host entries for all machines in machines.yaml
+✓ vpscli CLI:    installed at ~/.local/bin/vpscli
+✓ Public key:   Committed to keys/<name>.pub
+✓ Connection:   Tested OK
+
+Quick reference:
+  vpscli                     → Interactive menu
+  vpscli my-session          → Create/join tmux session (pair programming!)
+  vpscli list                → Show all sessions
+  vpscli end my-session      → Kill a session
+  Ctrl+B, D                 → Detach (session stays alive)
+```
+
+## Cleanup (Optional)
+
+If a developer ever needs to remove this setup:
+- Delete SSH key: `rm -rf ~/.ssh/vps/`
+- Remove host entries from `~/.ssh/config`
+- Remove config: `rm -rf ~/.vpscli/`
+- Remove binary: `rm ~/.local/bin/vpscli`
+- Remove the host key: `ssh-keygen -R <host>`
