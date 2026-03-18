@@ -1,7 +1,7 @@
 // vpscli version — auto-incremented by CI on each release
 import type { VersionInfo } from "../types";
 
-export const VPSCLI_VERSION = "1.1.35";
+export const VPSCLI_VERSION = "1.1.36";
 const GITHUB_REPO = "donmasakayan/vpscli";
 
 function isNewer(a: string, b: string): boolean {
