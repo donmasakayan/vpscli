@@ -7,6 +7,7 @@ import type { Config, Machine } from "../types";
 const VPSCLI_DIR = join(homedir(), ".vpscli");
 export const CONFIG_FILE = join(VPSCLI_DIR, "config");
 export const MACHINES_FILE = join(VPSCLI_DIR, "machines.yaml");
+export const SERVER_SESSION_FILE = join(VPSCLI_DIR, "session.sh");
 
 export async function loadConfig(): Promise<Config> {
   let vpscliUser = "";
@@ -88,5 +89,5 @@ export function vpscliDir(): string {
 }
 
 export function isOnVPS(): boolean {
-  return existsSync(`${homedir()}/.vpscli`);
+  return existsSync(SERVER_SESSION_FILE);
 }
